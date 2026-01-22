@@ -1,0 +1,189 @@
+# 严格校验Python 3.8.7版本
+
+import re
+import tkinter as tk
+from tkinter import filedialog, messagebox
+import openpyxl
+from openpyxl.styles import Alignment, Font
+import sys
+
+# 严格校验Python 3.8.7版本
+assert sys.version_info >= (3, 8) and sys.version_info < (3, 9), \
+    f"当前Python版本：{sys.version}，请使用3.8.7版本！"
+
+def check_colon_rule(cell_text):
+    """
+    校验第一列是否满足：含冒号（中文/英文）且冒号后无其他字符
+    返回：True/False
+    """
+    if not cell_text:
+        return False
+    
+    # 统一转为字符串并去除首尾空白，兼容中英文冒号
+    clean_text = str(cell_text).strip()
+    # 匹配“任意字符+冒号+结尾”（冒号后无内容）
+    colon_pattern = re.compile(r'.*[：:]$')
+    if not colon_pattern.match(clean_text):
+        return False
+    
+    # 提取冒号后的字符（需为空）
+    colon_index = clean_text.rfind('：') if '：' in clean_text else clean_text.rfind(':')
+    after_colon = clean_text[colon_index+1:].strip()
+    return len(after_colon) == 0
+
+def check_number_rule(cell_text):
+    """
+    校验第一列是否满足：第一个字符是数字第二个字符不是括号
+    返回：True/False
+    """
+    if not cell_text:
+        return False
+    
+    # 统一转为字符串并去除首尾空白
+    clean_text = str(cell_text).strip()
+    if len(clean_text) < 2:
+        return False
+    
+    # 第一个字符是数字
+    first_char_is_digit = clean_text[0].isdigit()
+    # 第二个字符不是括号（包含中文/英文括号）
+    second_char_not_bracket = clean_text[1] not in ['(', ')', '（', '）']
+    
+    return first_char_is_digit and second_char_not_bracket
+
+def format_target_row(ws, row_num):
+    """
+    对目标行执行操作：加粗第一列 + 合并前三列 + 靠左对齐
+    禁止合并多行，仅处理当前行
+    :param ws: 工作表对象
+    :param row_num: 目标行号（从1开始）
+    """
+    # 1. 加粗第一列单元格内容
+    cell_a = ws[f'A{row_num}']
+    cell_a.font = Font(bold=True)  # 设置加粗
+    
+    # 2. 合并当前行的前三列（A-C列），仅合并当前行（禁止合并多行）
+    ws.merge_cells(f'A{row_num}:C{row_num}')
+    
+    # 3. 设置合并后单元格内容靠左+垂直居中对齐
+    merged_cell = ws[f'A{row_num}']
+    merged_cell.alignment = Alignment(horizontal='left', vertical='center')
+
+def process_excel(file_path):
+    """核心处理逻辑：严格遵循所有规则"""
+    try:
+        # 打开Excel文件（支持.xlsx格式），保留原有格式
+        wb = openpyxl.load_workbook(file_path)
+        
+        # 遍历所有工作表
+        for ws_name in wb.sheetnames:
+            ws = wb[ws_name]
+            # 获取工作表最大行数（避免空行处理）
+            max_row = ws.max_row
+            
+            # 遍历行（跳过第一行模板行，从第二行开始）
+            for row_num in range(2, max_row + 1):
+                # 获取第一列单元格内容（兼容数字/字符串/空值）
+                cell_1 = ws[f'A{row_num}']
+                cell_1_text = cell_1.value if cell_1.value is not None else ""
+                
+                # 规则1：第一列含冒号且冒号后无其他字符
+                rule1 = check_colon_rule(cell_1_text)
+                # 规则2：第一列首字符是数字，第二个字符不是括号
+                rule2 = check_number_rule(cell_1_text)
+                
+                # 满足任一规则则执行格式化操作
+                if rule1 or rule2:
+                    format_target_row(ws, row_num)
+        
+        # 保存处理后的文档（不覆盖原文件）
+        save_path = file_path.replace('.xlsx', '_processed.xlsx')
+        wb.save(save_path)
+        wb.close()
+        return save_path
+    
+    except Exception as e:
+        raise Exception(f"Excel处理出错：{str(e)}")
+
+def select_and_process():
+    """GUI回调函数：选择文件并执行处理"""
+    file_path = filedialog.askopenfilename(
+        title="选择Excel文档（仅支持xlsx格式）",
+        filetypes=[("Excel文档", "*.xlsx"), ("所有文件", "*.*")]
+    )
+    if not file_path:
+        return
+    
+    try:
+        result_path = process_excel(file_path)
+        messagebox.showinfo("处理成功", f"Excel已处理完成！\n保存路径：\n{result_path}")
+    except Exception as e:
+        messagebox.showerror("处理失败", f"出错原因：\n{str(e)}")
+
+def create_gui():
+    """创建可视化用户界面"""
+    root = tk.Tk()
+    root.title("Excel自动化处理工具（Python 3.8.7）")
+    root.geometry("800x380")
+    root.resizable(False, False)
+    
+    # 标题
+    title_label = tk.Label(
+        root,
+        text="Excel文档自动化处理工具",
+        font=("微软雅黑", 18, "bold"),
+        fg="#2F5496"
+    )
+    title_label.pack(pady=15)
+    
+    # 规则说明（清晰展示所有要求）
+    rule_text = (
+        "📋 核心处理规则：\n"
+        "1. 跳过每页/每个工作表的第一行模板行，不做任何修改；\n"
+        "2. 满足以下任一条件的行（判断范围：仅第一列）：\n"
+        "   - 第一列含冒号（中文：/英文:）且冒号后无任何字符（如：“标题：”，非“标题：内容”）；\n"
+        "   - 第一列首字符为数字，且第二个字符不是括号（中文/英文括号）；\n"
+        "   → 加粗第一列内容；\n"
+        "   → 合并当前行的前三列（A-C列），禁止合并多行；\n"
+        "   → 合并后的内容靠左+垂直居中对齐；\n"
+        "3. 仅支持.xlsx格式，处理后生成新文件（不覆盖原文件），支持多工作表。"
+    )
+    rule_label = tk.Label(
+        root,
+        text=rule_text,
+        font=("微软雅黑", 9),
+        justify=tk.LEFT,
+        wraplength=780,
+        fg="#333333"
+    )
+    rule_label.pack(pady=10)
+    
+    # 处理按钮（美化样式）
+    process_btn = tk.Button(
+        root,
+        text="选择并处理xlsx文档",
+        font=("微软雅黑", 12, "bold"),
+        bg="#2D8CF0",
+        fg="white",
+        padx=45,
+        pady=12,
+        relief=tk.RAISED,
+        command=select_and_process
+    )
+    process_btn.pack(pady=15)
+    
+    # 版本&格式提示
+    version_label = tk.Label(
+        root,
+        text="适配Python 3.8.7 | 仅支持.xlsx格式 | 处理后不覆盖原文件 | 保留原有格式 + 加粗第一列",
+        font=("微软雅黑", 8),
+        fg="#999999"
+    )
+    version_label.pack(pady=5)
+    
+    root.mainloop()
+
+if __name__ == "__main__":
+    # 安装依赖（必须执行，适配Python 3.8.7）
+    # pip install openpyxl==3.0.9
+    create_gui()
